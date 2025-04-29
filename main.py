@@ -12,22 +12,43 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from apscheduler.schedulers.background import BackgroundScheduler
 from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request as AuthRequest
 from googleapiclient.discovery import build
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import uvicorn
 
-# --- CONFIG ---
+# --- CONFIGURATION ---
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
+# Paths for credentials/tokens
+CREDENTIALS_FILE = r'C:\Users\Admin\Documents\Python\EmailAutoReply\credentials.json'
 TOKEN_FILE = r'C:\Users\Admin\Documents\Python\EmailAutoReply\token.json'
 RESPONSES_FILE = r"C:\Users\Admin\Documents\Python\EmailAutoReply\response.json"
 PRICE_LIST_FILE = r'C:\Users\Admin\Documents\Python\EmailAutoReply\giaban.xlsx'
 ALLOWED_DOMAIN = 'winmart.masangroup.com'
 PENDING_DIR = r"C:\Users\Admin\Documents\Python\EmailAutoReply\pending_emails"
 
+# --- WRITE CREDENTIAL FILES FROM ENV VARS ---
+def _write_from_env(env_var: str, filename: str):
+    b64 = os.getenv(env_var)
+    if b64:
+        try:
+            data = base64.b64decode(b64.encode())
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            with open(filename, 'wb') as f:
+                f.write(data)
+            logging.info(f"Wrote {filename} from env var {env_var}")
+        except Exception as e:
+            logging.error(f"Failed to write {filename} from env var {env_var}: {e}")
+
+# Create credentials and token files before usage
+_write_from_env('GOOGLE_CRED_B64', CREDENTIALS_FILE)
+_write_from_env('GOOGLE_TOKEN_B64', TOKEN_FILE)
+
 # --- SETUP LOGGING ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+logger = logging.getLogger(__name__)
 
 # --- LOAD PRICE LIST ---
 price_df = pd.read_excel(PRICE_LIST_FILE, dtype={'MÃ Sản phẩm': str})
@@ -46,14 +67,27 @@ TOKENIZER = AutoTokenizer.from_pretrained("vinai/phobert-base")
 MODEL = AutoModelForSequenceClassification.from_pretrained("vinai/phobert-base", num_labels=4)
 CATEGORIES = ["đổi trả", "hủy vật lý", "phản ánh sản phẩm", "khác"]
 
-# --- GMAIL SERVICE ---
+# --- GMAIL SERVICE INIT & REFRESH ---
 def init_gmail_service():
-    creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    creds = None
+    if os.path.exists(TOKEN_FILE):
+        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+
+    # Refresh if expired
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(AuthRequest())
+            with open(TOKEN_FILE, 'w', encoding='utf-8') as token_f:
+                token_f.write(creds.to_json())
+            logger.info("Refreshed access token and updated token.json")
+        except Exception as e:
+            logger.error(f"Failed to refresh token: {e}", exc_info=True)
+
     http = httplib2.Http(timeout=60)
     return build('gmail', 'v1', credentials=creds, http=http)
 
 # --- EMAIL PROCESSING HELPERS ---
-def extract_table_from_html(html):
+def extract_table_from_html(html: str):
     try:
         return pd.read_html(html)[0]
     except Exception:
@@ -74,21 +108,20 @@ def calculate_total_price(table):
     return 0
 
 
-def classify_email(content):
+def classify_email(content: str) -> str:
     inputs = TOKENIZER(content, return_tensors="pt", truncation=True, padding=True, max_length=512)
     outputs = MODEL(**inputs)
-    predicted_class = torch.argmax(outputs.logits).item()
-    return CATEGORIES[predicted_class]
+    return CATEGORIES[int(torch.argmax(outputs.logits))]
 
 
-def choose_reply(body):
+def choose_reply(body: str) -> str:
     tbl = extract_table_from_html(body)
     total = calculate_total_price(tbl)
     if tbl is not None:
-        cat = 'đổi trả' if total > 200000 else 'hủy vật lý'
+        category = 'đổi trả' if total > 200000 else 'hủy vật lý'
     else:
-        cat = classify_email(body)
-    return next((r['reply'] for r in RESPONSES if r['category'] == cat), "Không tìm thấy câu trả lời phù hợp.")
+        category = classify_email(body)
+    return next((r['reply'] for r in RESPONSES if r['category'] == category), "Không tìm thấy câu trả lời phù hợp.")
 
 # --- CHECK & QUEUE EMAILS ---
 def check_emails():
@@ -97,7 +130,7 @@ def check_emails():
         result = service.users().messages().list(userId='me', labelIds=['INBOX'], q="is:unread").execute()
         msgs = result.get('messages', [])
     except Exception as e:
-        logging.error(f"Failed to fetch unread emails: {e}", exc_info=True)
+        logger.error(f"Failed to fetch unread emails: {e}", exc_info=True)
         return
 
     for m in msgs:
@@ -119,7 +152,7 @@ def check_emails():
             with open(f"{PENDING_DIR}/{m['id']}.json", 'w', encoding='utf-8') as f:
                 json.dump({'message_id': m['id'], 'to': hdrs.get('From', ''), 'subject': hdrs.get('Subject', ''), 'body': reply}, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            logging.error(f"Error processing message {m['id']}: {e}", exc_info=True)
+            logger.error(f"Error processing message {m['id']}: {e}", exc_info=True)
             continue
 
 # --- SEND EMAIL & ROUTES ---
