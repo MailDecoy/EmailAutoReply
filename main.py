@@ -21,13 +21,14 @@ import uvicorn
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
+BASE_DIR = os.getcwd()
 # Paths for credentials/tokens
-CREDENTIALS_FILE = r'C:\Users\Admin\Documents\Python\EmailAutoReply\credentials.json'
-TOKEN_FILE = r'C:\Users\Admin\Documents\Python\EmailAutoReply\token.json'
-RESPONSES_FILE = r"C:\Users\Admin\Documents\Python\EmailAutoReply\response.json"
-PRICE_LIST_FILE = r'C:\Users\Admin\Documents\Python\EmailAutoReply\giaban.xlsx'
+CREDENTIALS_FILE = os.path.join(BASE_DIR, 'credentials.json')
+TOKEN_FILE = os.path.join(BASE_DIR, 'token.json')
+RESPONSES_FILE = os.path.join(BASE_DIR, 'response.json')
+PRICE_LIST_FILE = os.path.join(BASE_DIR, 'giaban.xlsx')
 ALLOWED_DOMAIN = 'winmart.masangroup.com'
-PENDING_DIR = r"C:\Users\Admin\Documents\Python\EmailAutoReply\pending_emails"
+PENDING_DIR = os.path.join(BASE_DIR, 'pending_emails')
 
 # --- WRITE CREDENTIAL FILES FROM ENV VARS ---
 def _write_from_env(env_var: str, filename: str):
