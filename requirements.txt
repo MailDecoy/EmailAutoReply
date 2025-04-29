@@ -12,3 +12,4 @@ requests>=2.25.0
 httplib2>=0.22.0
 Jinja2>=3.0.0
 python-dotenv>=0.20.0
+openpyxl>=3.0.0
