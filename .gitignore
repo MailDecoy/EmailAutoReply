@@ -6,3 +6,8 @@ credentials.json
 token.json
 credentials.json
 token.json
+pending_emails/
+sent_emails/
+__pycache__/
+*.py[cod]
+*.pyo
